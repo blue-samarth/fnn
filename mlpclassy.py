@@ -4,6 +4,8 @@
 import torch.nn as nn
 import torch
 import numpy as np
+import matplotlib.pyplot as plt
+
 
 class FCL(nn.Module):
 
@@ -57,9 +59,6 @@ class FCL(nn.Module):
         self.beta1 = 0.9
         self.beta2 = 0.999
         self.epsilon = 1e-8
-
-
-
 
 
            
@@ -132,6 +131,7 @@ class FCL(nn.Module):
             return grad
 
 
+
     def forward(self , x : torch.Tensor) -> torch.Tensor:
 
         """
@@ -202,3 +202,128 @@ class FCL(nn.Module):
         d_inputs = torch.matmul(d_activation, self.m_weights.T)
 
         return d_inputs
+
+
+
+
+
+
+
+class CreateModel(nn.Module):
+    """
+    This class creates a model with multiple fully connected layers.
+    """
+    def __init__(self, input_size : int, hidden_size : list, output_size : int) -> None:
+        """
+        initialize the model with input size, hidden size and output size.
+        Args:
+            input_size (int): Number of input features.
+            hidden_size (list): List of integers representing the number of neurons in each hidden layer. [hidden1,hidden2]
+            output_size (int): Number of output features.
+        
+        """
+        
+        super(CreateModel, self).__init__()
+        self.fc1 = FCL(input_size, hidden_size[0], activation='relu')
+        self.fc2 = FCL(hidden_size[0], hidden_size[1], activation='relu')
+        self.fc3 = FCL(hidden_size[1], output_size, activation='softmax')
+    
+
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Perform the forward pass of the model.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+
+        Returns:
+            torch.Tensor: Output tensor after applying the model transformation.
+        """
+        x = self.fc1.forward(x)
+        x = self.fc2.forward(x)
+        x = self.fc3.forward(x)
+
+        return x
+    
+
+
+    def train(self , x: torch.Tensor, y: torch.Tensor, learning_rate: float, n_epochs : int, decay : float, plot_training_result=False) -> None:
+        """
+        Train the model using the Adam optimizer.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+            y (torch.Tensor): Target tensor.
+            learning_rate (float): Learning rate for optimization.
+            n_epochs (int): Number of training epochs.
+            decay (float): Learning rate decay factor.
+            plot_training_result (bool): Whether to plot the training loss.
+        """
+
+        t = 0
+
+        loss_log = []
+        accuracy_log = []
+
+        for epoch in range(n_epochs):
+            output = self.forward(x)
+
+            # Compute the loss
+            epsilon = 1e-10
+            loss = -torch.mean(y * torch.log(output + epsilon))
+
+            # Compute the accuracy
+            predictions_labels = torch.argmax(output, dim=1)
+            true_labels = torch.argmax(y, dim=1)
+            accuracy = torch.sum(predictions_labels == true_labels).item() / len(true_labels)
+
+            # backward pass
+            y_grad = (output - y)/output.shape[0]
+            t += 1
+            learning_rate = learning_rate * 1/(1 + decay * epoch)
+
+            grad_1 = self.fc3.backward(y_grad, learning_rate, t)
+            grad_2 = self.fc2.backward(grad_1, learning_rate, t)
+            grad_3 = self.fc1.backward(grad_2, learning_rate, t)
+
+            loss_log.append(loss.item())
+            accuracy_log.append(accuracy)
+
+            if plot_training_result:
+                self._plot_training_results(n_epochs, loss_log, accuracy_log)
+
+        print(f"Final Loss: {loss_log[-1]}")
+        print(f"Final Accuracy: {accuracy_log[-1]}")
+
+    def _plot_training_results(self, n_epochs, loss_log, accuracy_log):
+        plt.figure(figsize=(12, 5))
+        plt.subplot(1, 2, 1)
+        plt.plot(loss_log, label='Training Loss')
+        plt.xlabel('Epochs')
+        plt.ylabel('Loss')
+        plt.title('Training Loss')
+        plt.legend()
+
+        plt.subplot(1, 2, 2)
+        plt.plot(accuracy_log, label='Training Accuracy')
+        plt.xlabel('Epochs')
+        plt.ylabel('Accuracy')
+        plt.title('Training Accuracy')
+        plt.legend()
+        plt.show()
+        plt.close()
+
+
+
+if __name__ == "__main__":
+    input_size = 200
+    hidden_size = [500, 200]
+    output_size = 2
+
+    x_train , y_train = torch.randn(1000, input_size), torch.randint(0, 2, (1000, output_size)).float()
+    x_test , y_test = torch.randn(100, input_size), torch.randint(0, 2, (100, output_size)).float()
+
+    model = CreateModel(input_size, hidden_size, output_size)
+
+    model.train(x_train, y_train, learning_rate=0.01, n_epochs=100, decay=0.01, plot_training_result=True)
