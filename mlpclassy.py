@@ -50,8 +50,8 @@ class FCL(nn.Module):
 
         # Defining mean and variance for weights and biases
         # These are used in Adam optimizer
-        self.m_weights = nn.Parameter(torch.tensor(self.weights, dtype=torch.float32), requires_grad=True)
-        self.m_bias = nn.Parameter(torch.tensor(self.bias, dtype=torch.float32), requires_grad=True)
+        self.m_weights = nn.Parameter(self.weights.clone().detach(), requires_grad=True)
+        self.m_bias = nn.Parameter(self.bias.clone().detach(), requires_grad=True)
         self.v_weights = nn.Parameter(torch.zeros_like(self.m_weights), requires_grad=False)
         self.v_bias = nn.Parameter(torch.zeros_like(self.m_bias), requires_grad=False) 
         
@@ -213,20 +213,38 @@ class CreateModel(nn.Module):
     """
     This class creates a model with multiple fully connected layers.
     """
-    def __init__(self, input_size : int, hidden_size : list, output_size : int) -> None:
+    def __init__(self, input_size : int, hidden_size : int, hidden_layer_neurons : list, output_size : int) -> None:
         """
         initialize the model with input size, hidden size and output size.
         Args:
             input_size (int): Number of input features.
-            hidden_size (list): List of integers representing the number of neurons in each hidden layer. [hidden1,hidden2]
+            hidden_layer_neurons (list): List of integers representing the number of neurons in each hidden layer. [hidden1,hidden2]
             output_size (int): Number of output features.
         
         """
         
+        if not isinstance(input_size, int) or input_size <= 0:
+            raise ValueError("input_size must be a positive integer")
+        
+        if not isinstance(hidden_size, int) or hidden_size <= 0:
+            raise ValueError("hidden_size must be a positive integer")
+        
+        if not isinstance(hidden_layer_neurons, list) or len(hidden_layer_neurons) != hidden_size:
+            raise ValueError("hidden_layer_neurons must be a list of length hidden_size")
+        
+        if not isinstance(output_size, int) or output_size <= 0:
+            raise ValueError("output_size must be a positive integer")
+
         super(CreateModel, self).__init__()
-        self.fc1 = FCL(input_size, hidden_size[0], activation='relu')
-        self.fc2 = FCL(hidden_size[0], hidden_size[1], activation='relu')
-        self.fc3 = FCL(hidden_size[1], output_size, activation='softmax')
+        self.layers = nn.ModuleList()
+
+
+        self.fc1 = FCL(input_size, hidden_layer_neurons[0], activation='relu')
+
+        for i in range(hidden_size - 1):
+            self.layers.append(FCL(hidden_layer_neurons[i], hidden_layer_neurons[i+1], activation='relu'))
+        
+        self.fc2 = FCL(hidden_layer_neurons[-1], output_size, activation='softmax')
     
 
 
@@ -240,10 +258,16 @@ class CreateModel(nn.Module):
         Returns:
             torch.Tensor: Output tensor after applying the model transformation.
         """
-        x = self.fc1.forward(x)
-        x = self.fc2.forward(x)
-        x = self.fc3.forward(x)
 
+        if not isinstance(x, torch.Tensor):
+            raise TypeError("Input must be a Tensor (torch.Tensor)")
+        
+
+        x = self.fc1.forward(x)
+        for layer in self.layers:
+            x = layer.forward(x)
+        x = self.fc2.forward(x)
+        
         return x
     
 
@@ -260,6 +284,27 @@ class CreateModel(nn.Module):
             decay (float): Learning rate decay factor.
             plot_training_result (bool): Whether to plot the training loss.
         """
+
+        if not isinstance(x, torch.Tensor) or not isinstance(y, torch.Tensor):
+            raise TypeError("x and y must be torch.Tensor")
+        
+        if x.shape[0] != y.shape[0]:
+            raise ValueError("x and y must have the same number of samples")
+        
+        if x.shape[1] != self.fc1.input_size:
+            raise ValueError(f"Expected x with shape (batch_size, {self.fc1.input_size}), but got {x.shape}")
+        
+        if y.shape[1] != self.fc2.output_size:
+            raise ValueError(f"Expected y with shape (batch_size, {self.fc2.output_size}), but got {y.shape}")
+        
+        if not isinstance(learning_rate, (int, float)) or learning_rate <= 0:
+            raise ValueError("learning_rate must be a positive number")
+        
+        if not isinstance(n_epochs, int) or n_epochs <= 0:
+            raise ValueError("n_epochs must be a positive integer")
+        
+        if not isinstance(decay, (int, float)) or decay < 0:
+            raise ValueError("decay must be a non-negative number")
 
         t = 0
 
@@ -283,47 +328,57 @@ class CreateModel(nn.Module):
             t += 1
             learning_rate = learning_rate * 1/(1 + decay * epoch)
 
-            grad_1 = self.fc3.backward(y_grad, learning_rate, t)
-            grad_2 = self.fc2.backward(grad_1, learning_rate, t)
-            grad_3 = self.fc1.backward(grad_2, learning_rate, t)
+
+            grad_y = self.fc2.backward(y_grad, learning_rate, t)
+            for layer in reversed(self.layers):
+                grad_y = layer.backward(grad_y, learning_rate, t)
+            grad_y = self.fc1.backward(grad_y, learning_rate, t)
+
+            print(f"Epoch {epoch+1}/{n_epochs} Loss: {loss.item()} Accuracy: {accuracy}")
 
             loss_log.append(loss.item())
             accuracy_log.append(accuracy)
 
-            if plot_training_result:
-                self._plot_training_results(n_epochs, loss_log, accuracy_log)
+            # if plot_training_result:
+            #     self._plot_training_results(n_epochs, loss_log, accuracy_log)
 
         print(f"Final Loss: {loss_log[-1]}")
         print(f"Final Accuracy: {accuracy_log[-1]}")
 
-    def _plot_training_results(self, n_epochs, loss_log, accuracy_log):
-        plt.figure(figsize=(12, 5))
-        plt.subplot(1, 2, 1)
-        plt.plot(loss_log, label='Training Loss')
-        plt.xlabel('Epochs')
-        plt.ylabel('Loss')
-        plt.title('Training Loss')
-        plt.legend()
+    # def _plot_training_results(self, n_epochs, loss_log, accuracy_log):
+        # plt.plot(range(n_epochs), loss_log, label='Training Loss')
+        # plt.xlabel('Epoch')
+        # plt.ylabel('Loss')
+        # plt.title('Training Loss Curve')
+        # plt.legend()
+        # plt.show()
 
-        plt.subplot(1, 2, 2)
-        plt.plot(accuracy_log, label='Training Accuracy')
-        plt.xlabel('Epochs')
-        plt.ylabel('Accuracy')
-        plt.title('Training Accuracy')
-        plt.legend()
-        plt.show()
-        plt.close()
+        # plt.plot(range(n_epochs), accuracy_log, label='Training Accuracy')
+        # plt.xlabel('Epoch')
+        # plt.ylabel('Accuracy')
+        # plt.title('Training Accuracy Curve')
+        # plt.legend()
+        # plt.show()
 
 
 
 if __name__ == "__main__":
-    input_size = 200
-    hidden_size = [500, 200]
+    input_size = 784
+    hidden_size = 2
+    hidden_layer_neurons = [128, 64]
     output_size = 2
 
-    x_train , y_train = torch.randn(1000, input_size), torch.randint(0, 2, (1000, output_size)).float()
-    x_test , y_test = torch.randn(100, input_size), torch.randint(0, 2, (100, output_size)).float()
 
-    model = CreateModel(input_size, hidden_size, output_size)
+    train_x, train_y = torch.randn(100, input_size), torch.randint(0, 2, (100, output_size)).float()
+    print(torch.isnan(train_x).any(), torch.isinf(train_x).any())
+    print(torch.isnan(train_y).any(), torch.isinf(train_y).any())
 
-    model.train(x_train, y_train, learning_rate=0.01, n_epochs=100, decay=0.01, plot_training_result=True)
+
+    model = CreateModel(input_size, hidden_size, hidden_layer_neurons, output_size)
+    model.train(train_x, train_y, learning_rate=0.01, n_epochs=100, decay=0.01, plot_training_result=True)
+
+
+
+    
+
+
