@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 
 class FCL(nn.Module):
@@ -250,6 +251,7 @@ class CreateModel(nn.Module):
         initialize the model with input size, hidden size and output size.
         Args:
             input_size (int): Number of input features.
+            hidden_size (int): Number of hidden layers.
             hidden_layer_neurons (list): List of integers representing the number of neurons in each hidden layer. [hidden1,hidden2]
             output_size (int): Number of output features.
         
@@ -271,12 +273,14 @@ class CreateModel(nn.Module):
         self.layers = nn.ModuleList()
 
 
-        self.fc1 = FCL(input_size, hidden_layer_neurons[0], activation='relu')
+        # self.fc1 = FCL(input_size, hidden_layer_neurons[0], activation='relu')
+        self.layers.append(FCL(input_size, hidden_layer_neurons[0], activation='relu'))
 
         for i in range(hidden_size - 1):
             self.layers.append(FCL(hidden_layer_neurons[i], hidden_layer_neurons[i+1], activation='relu'))
         
-        self.fc2 = FCL(hidden_layer_neurons[-1], output_size, activation='softmax')
+        # self.fc2 = FCL(hidden_layer_neurons[-1], output_size, activation='softmax')
+        self.layers.append(FCL(hidden_layer_neurons[-1], output_size, activation='softmax'))
     
 
 
@@ -294,12 +298,8 @@ class CreateModel(nn.Module):
         if not isinstance(x, torch.Tensor):
             raise TypeError("Input must be a Tensor (torch.Tensor)")
         
-
-        x = self.fc1.forward(x)
         for layer in self.layers:
-            x = layer.forward(x)
-        x = self.fc2.forward(x)
-        
+            x = layer(x) # forward pass
         return x
     
 
@@ -323,11 +323,11 @@ class CreateModel(nn.Module):
         if x.shape[0] != y.shape[0]:
             raise ValueError("x and y must have the same number of samples")
         
-        if x.shape[1] != self.fc1.input_size:
-            raise ValueError(f"Expected x with shape (batch_size, {self.fc1.input_size}), but got {x.shape}")
+        if x.shape[1] != self.layers[0].input_size:
+            raise ValueError(f"Expected x with shape (batch_size, {self.layers[0].input_size}), but got {x.shape}")
         
-        if y.shape[1] != self.fc2.output_size:
-            raise ValueError(f"Expected y with shape (batch_size, {self.fc2.output_size}), but got {y.shape}")
+        if y.shape[1] != self.layers[-1].output_size:
+            raise ValueError(f"Expected y with shape (batch_size, {self.layers[-1].output_size}), but got {y.shape}")
         
         if not isinstance(learning_rate, (int, float)) or learning_rate <= 0:
             raise ValueError("learning_rate must be a positive number")
@@ -339,16 +339,15 @@ class CreateModel(nn.Module):
             raise ValueError("decay must be a non-negative number")
 
         t = 0
-
         loss_log = []
         accuracy_log = []
 
-        for epoch in range(n_epochs):
+        for epoch in tqdm(range(n_epochs) , desc="Training Model"):
             output = self.forward(x)
 
             # Compute the loss
             epsilon = 1e-10
-            loss = -torch.mean(y * torch.log(output + epsilon))
+            loss = -torch.mean(y * torch.log(output + epsilon)) 
 
             # Compute the accuracy
             predictions_labels = torch.argmax(output, dim=1)
@@ -358,59 +357,97 @@ class CreateModel(nn.Module):
             # backward pass
             y_grad = (output - y)/output.shape[0]
             t += 1
-            learning_rate = learning_rate * 1/(1 + decay * epoch)
+            learning_rate = learning_rate * (1/(1 + decay * epoch))
 
 
-            grad_y = self.fc2.backward(y_grad, learning_rate, t)
             for layer in reversed(self.layers):
-                grad_y = layer.backward(grad_y, learning_rate, t)
-            grad_y = self.fc1.backward(grad_y, learning_rate, t)
+                y_grad = layer.backward(y_grad, learning_rate, t)
 
             print(f"Epoch {epoch+1}/{n_epochs} Loss: {loss.item()} Accuracy: {accuracy}")
 
             loss_log.append(loss.item())
             accuracy_log.append(accuracy)
 
-            # if plot_training_result:
-            #     self._plot_training_results(n_epochs, loss_log, accuracy_log)
+            if epoch % 10 == 0 or loss.item() < min(loss_log, default=float('inf')):
+                torch.save(self.state_dict(), f"checkpoint_epoch_{epoch}.pt")
 
         print(f"Final Loss: {loss_log[-1]}")
         print(f"Final Accuracy: {accuracy_log[-1]}")
 
-    # def _plot_training_results(self, n_epochs, loss_log, accuracy_log):
-        # plt.plot(range(n_epochs), loss_log, label='Training Loss')
-        # plt.xlabel('Epoch')
-        # plt.ylabel('Loss')
-        # plt.title('Training Loss Curve')
-        # plt.legend()
-        # plt.show()
+        if plot_training_result:
+            self._plot_training_results(n_epochs, loss_log, accuracy_log)
 
-        # plt.plot(range(n_epochs), accuracy_log, label='Training Accuracy')
-        # plt.xlabel('Epoch')
-        # plt.ylabel('Accuracy')
-        # plt.title('Training Accuracy Curve')
-        # plt.legend()
-        # plt.show()
+
+
+    def _plot_training_results(self, n_epochs, loss_log, accuracy_log):
+        """
+        Plot the training loss and accuracy curves.
+
+        Args:
+            n_epochs (int): Number of epochs.
+            loss_log (list): Log of loss values for each epoch.
+            accuracy_log (list): Log of accuracy values for each epoch.
+        """
+
+        # Plot Loss Curve
+        plt.figure(figsize=(12, 5))
+
+        plt.subplot(1, 2, 1)  # Create subplot for loss
+        plt.plot(range(n_epochs), loss_log, label='Training Loss', color='blue')
+        plt.xlabel('Epochs')
+        plt.ylabel('Loss')
+        plt.title('Training Loss Curve')
+        plt.legend()
+
+        # Plot Accuracy Curve
+        plt.subplot(1, 2, 2)  # Create subplot for accuracy
+        plt.plot(range(n_epochs), accuracy_log, label='Training Accuracy', color='green')
+        plt.xlabel('Epochs')
+        plt.ylabel('Accuracy')
+        plt.title('Training Accuracy Curve')
+        plt.legend()
+
+        # Display the plots
+        plt.tight_layout()
+        plt.show()
 
 
 
 if __name__ == "__main__":
-    input_size = 784
-    hidden_size = 2
-    hidden_layer_neurons = [128, 64]
-    output_size = 2
+    import torch
+    import torchvision
+    import torchvision.transforms as transforms
 
+    input_size = 3072  # CIFAR-10 images are 32x32x3, so the flattened input size is 3072
+    hidden_size = 2  # Number of hidden layers
+    hidden_layer_neurons = [128 , 32]  # Number of neurons in each hidden layer
+    output_size = 10  # CIFAR-10 has 10 classes
 
-    train_x, train_y = torch.randn(100, input_size), torch.randint(0, 2, (100, output_size)).float()
-    print(torch.isnan(train_x).any(), torch.isinf(train_x).any())
-    print(torch.isnan(train_y).any(), torch.isinf(train_y).any())
+    # Transform to convert the images to tensor and flatten them
+    transform = transforms.Compose([transforms.ToTensor(), transforms.Lambda(lambda x: x.view(-1))])
 
+    # Download CIFAR-10 dataset
+    train_dataset = torchvision.datasets.CIFAR10(root='./data', train=True, transform=transform, download=True)
 
+    # Extracting data (manually)
+    train_x = torch.stack([train_dataset[i][0] for i in range(len(train_dataset))])
+    train_y = torch.tensor([train_dataset[i][1] for i in range(len(train_dataset))])
+
+    # One-hot encode the target labels (if not already done)
+    train_y_one_hot = torch.zeros(train_y.size(0), output_size).scatter_(1, train_y.unsqueeze(1), 1)
+
+    if torch.any(torch.isnan(train_x)):
+        print("Input data contains NaN values")
+        raise ValueError("Input data contains NaN values")
+    print(train_x.shape , "input data does not contain NaN values")
+    if torch.any(torch.isnan(train_y_one_hot)):
+        print("Target data contains NaN values")
+        raise ValueError("Target data contains NaN values")
+    print(train_y_one_hot.shape , "target data does not contain NaN values")
+    # Ensure the model is initialized with the correct input size (3072 for CIFAR-10)
     model = CreateModel(input_size, hidden_size, hidden_layer_neurons, output_size)
-    model.train(train_x, train_y, learning_rate=0.01, n_epochs=100, decay=0.01, plot_training_result=True)
 
-
-
-    
+    # Train the model
+    model.train(train_x, train_y_one_hot, learning_rate=0.001, n_epochs=10, decay=0.01, plot_training_result=True)
 
 
