@@ -29,8 +29,7 @@ class FCL(nn.Module):
             epsilon (float): Small constant for numerical stability in Adam.
     """
 
-    def __init__(self, input_size : int, output_size : int , activation : str) -> None:
-
+    def __init__(self, input_size : int, output_size : int , activation : str , grad_clip : float = 1.0) -> None:
         """
         Initialize the Fully Connected Layer.
 
@@ -43,6 +42,12 @@ class FCL(nn.Module):
         super(FCL, self).__init__()
         self.input_size = input_size
         self.output_size = output_size
+        self.grad_clip = grad_clip
+
+        if input_size <= 0 or output_size <= 0:
+            raise ValueError("Input and output sizes must be positive integers")
+        if not isinstance(input_size, int) or not isinstance(output_size, int):
+            raise TypeError("Input and output sizes must be integers")
 
         self.activation = self.get_activation(activation)
         self.weights = nn.Parameter(self.initialize_weights())
@@ -63,7 +68,6 @@ class FCL(nn.Module):
 
            
     def get_activation(self, activation: str) -> nn.Module:
-
         """
             Get the activation function based on the provided string.
 
@@ -94,9 +98,8 @@ class FCL(nn.Module):
     def initialize_weights(self) -> nn.Parameter:
         """
         Initialize the weights of the layer based on the activation function.
-
-
         """
+
         if isinstance(self.activation, (nn.Sigmoid, nn.Tanh)):
             weights = nn.init.xavier_normal_(torch.empty(self.input_size, self.output_size))
         elif isinstance(self.activation, nn.ReLU):
@@ -106,7 +109,6 @@ class FCL(nn.Module):
         return nn.Parameter(weights)
 
     def compute_activation_gradient(self, d_values: torch.Tensor) -> torch.Tensor:
-            
             """
             Compute the gradient of the loss w.r.t. the output of the layer.
     
@@ -133,7 +135,6 @@ class FCL(nn.Module):
 
 
     def forward(self , x : torch.Tensor) -> torch.Tensor:
-
         """
         Perform the forward pass of the layer.
 
@@ -143,7 +144,10 @@ class FCL(nn.Module):
         Returns:
             torch.Tensor: Output tensor after applying the layer transformation.
         """
-
+        
+        if x.shape[-1] != self.input_size:
+            raise ValueError(f"Expected input with last dimension {self.input_size}, got {x.shape[-1]}")
+        
         self.x = x
         z = torch.matmul(x, self.m_weights) + self.m_bias
         self.output = self.activation(z)
@@ -153,7 +157,6 @@ class FCL(nn.Module):
 
 
     def backward(self, d_values: torch.Tensor, learning_rate: float, t: int) -> torch.Tensor:
-
         """
         Perform the backward pass of the layer and update weights using Adam optimization.
 
@@ -195,8 +198,8 @@ class FCL(nn.Module):
         self.m_bias.data -= learning_rate * m_hat_bias / (torch.sqrt(v_hat_bias) + self.epsilon)
 
         # Clip gradients to avoid exploding gradients
-        d_weights = torch.clamp(d_weights, -1.0, 1.0)
-        d_bias = torch.clamp(d_bias, -1.0, 1.0)
+        d_weights = torch.clamp(d_weights, -self.grad_clip, self.grad_clip)
+        d_bias = torch.clamp(d_bias, -self.grad_clip, self.grad_clip)
 
         # Gradient with respect to the input for the next layer
         d_inputs = torch.matmul(d_activation, self.m_weights.T)
@@ -204,9 +207,38 @@ class FCL(nn.Module):
         return d_inputs
 
 
+    def parameters(self):
+        """
+        Returns all trainable parameters of the layer
+        """
+        return [self.weights, self.bias, self.m_weights, self.m_bias]
 
+    def reset_optimizer_state(self):
+        """
+        Reset the Adam optimizer state
+        """
+        self.m_weights.data.zero_()
+        self.m_bias.data.zero_()
+        self.v_weights.data.zero_()
+        self.v_bias.data.zero_()
 
+    def extra_repr(self) -> str:
+        """
+        Provides a more informative string representation
+        """
+        return f'input_size={self.input_size}, output_size={self.output_size}, activation={self.activation.__class__.__name__}'
 
+    def to_device(self, device: torch.device):
+        """
+        Move the layer to specified device
+        """
+        self.weights = self.weights.to(device)
+        self.bias = self.bias.to(device)
+        self.m_weights = self.m_weights.to(device)
+        self.m_bias = self.m_bias.to(device)
+        self.v_weights = self.v_weights.to(device)
+        self.v_bias = self.v_bias.to(device)
+        return self
 
 
 class CreateModel(nn.Module):
